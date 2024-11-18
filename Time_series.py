@@ -1,10 +1,8 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from sklearn.model_selection import train_test_split
-from sklearn.ensemble import GradientBoostingRegressor
+from statsmodels.tsa.arima.model import ARIMA
 from sklearn.preprocessing import LabelEncoder
-from sklearn.metrics import mean_absolute_error, mean_squared_error
 import joblib
 
 # Load the dataset
@@ -18,43 +16,52 @@ df['experience_level_encoded'] = experience_encoder.fit_transform(df['experience
 # Group the data by work_year and experience_level_encoded, calculating the mean salary_in_usd for each group
 grouped_data_v2 = df.groupby(['work_year', 'experience_level_encoded'])['salary_in_usd'].mean().reset_index()
 
-# Prepare the dataset for training
-X = grouped_data_v2[['work_year', 'experience_level_encoded']]
-y = grouped_data_v2['salary_in_usd']
+# Set up a time series dataset
+# We'll focus on predicting salaries for each experience level over the years
+experience_levels = grouped_data_v2['experience_level_encoded'].unique()
 
-# Split the data into train and test sets (80-20 split)
-X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+# Determine the min and max date ranges for user input
+min_year = grouped_data_v2['work_year'].min()
+max_year = grouped_data_v2['work_year'].max() + 6  # Including the forecast period
 
-# Create and train the Gradient Boosting Regressor model
-gbr_model = GradientBoostingRegressor(n_estimators=200, learning_rate=0.1, max_depth=4, random_state=42)
-gbr_model.fit(X_train, y_train)
+# Initialize a plot for all experience levels
+plt.figure(figsize=(12, 8))
 
-# Make predictions
-y_pred = gbr_model.predict(X_test)
-
-# Calculate performance metrics
-mae = mean_absolute_error(y_test, y_pred)
-rmse = np.sqrt(mean_squared_error(y_test, y_pred))
-
-# Display the updated metrics
-print("Updated Metrics:")
-print(f"MAE = {mae:.2f}, RMSE = {rmse:.2f}")
-
-# Save the trained model for deployment
-joblib.dump(gbr_model, 'gbr_model.pkl')
-joblib.dump(experience_encoder, 'experience_encoder.pkl')
-
-# Plotting the trends for better visualization
-plt.figure(figsize=(12, 6))
-unique_experience_levels = grouped_data_v2['experience_level_encoded'].unique()
-for experience_level in unique_experience_levels:
-    exp_label = experience_encoder.inverse_transform([experience_level])[0]
+# Create a time series model for each experience level and forecast future salaries
+for experience_level in experience_levels:
+    # Filter data for the current experience level
     experience_data = grouped_data_v2[grouped_data_v2['experience_level_encoded'] == experience_level]
-    plt.plot(experience_data['work_year'], experience_data['salary_in_usd'], marker='o', label=exp_label)
+    experience_data.set_index('work_year', inplace=True)
+    experience_data = experience_data.sort_index()
 
+    # Fit ARIMA model (p, d, q) parameters can be tuned for better performance
+    model = ARIMA(experience_data['salary_in_usd'], order=(1, 1, 1))
+    model_fit = model.fit()
+
+    # Forecasting the next 6 years
+    forecast_years = [experience_data.index[-1] + i for i in range(1, 7)]
+    forecast = model_fit.forecast(steps=6)
+
+    # Display forecasted values
+    print(f"Experience Level: {experience_encoder.inverse_transform([experience_level])[0]}")
+    for year, value in zip(forecast_years, forecast):
+        print(f"Year {year}: Predicted Average Salary = ${value:.2f}")
+
+    # Plotting the original data and forecast in the combined graph
+    plt.plot(experience_data.index, experience_data['salary_in_usd'], marker='o', label=f'Historical Salary - {experience_encoder.inverse_transform([experience_level])[0]}')
+    plt.plot(forecast_years, forecast, marker='x', linestyle='--', label=f'Forecasted Salary - {experience_encoder.inverse_transform([experience_level])[0]}')
+
+# Finalize the combined plot
 plt.xlabel('Year')
 plt.ylabel('Average Salary (USD)')
 plt.title('Average Salary Trends by Experience Level Over Time')
 plt.legend(title="Experience Level")
 plt.grid(True)
-plt.savefig('salary_trends.png')
+plt.savefig('combined_salary_trends_forecast.png')
+plt.show()
+
+# Save the label encoder for deployment
+joblib.dump(experience_encoder, 'experience_encoder.pkl')
+
+# Print min and max year for frontend integration
+print(f"Min Year: {min_year}, Max Year: {max_year}")
