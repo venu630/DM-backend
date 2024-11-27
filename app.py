@@ -13,7 +13,7 @@ import numpy as np
 from statsmodels.tsa.arima.model import ARIMA
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
 
 # Load models and encoder
 knn_model = joblib.load('knn_model.pkl')
