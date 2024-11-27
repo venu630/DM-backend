@@ -1,9 +1,10 @@
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
-from statsmodels.tsa.arima.model import ARIMA
-from sklearn.preprocessing import LabelEncoder
 import joblib
+from statsmodels.tsa.arima.model import ARIMA
+import os
+from sklearn.preprocessing import LabelEncoder
 
 # Load the dataset
 file_path = 'salaries.csv'
@@ -16,52 +17,37 @@ df['experience_level_encoded'] = experience_encoder.fit_transform(df['experience
 # Group the data by work_year and experience_level_encoded, calculating the mean salary_in_usd for each group
 grouped_data_v2 = df.groupby(['work_year', 'experience_level_encoded'])['salary_in_usd'].mean().reset_index()
 
-# Set up a time series dataset
-# We'll focus on predicting salaries for each experience level over the years
-experience_levels = grouped_data_v2['experience_level_encoded'].unique()
-
-# Determine the min and max date ranges for user input
-min_year = grouped_data_v2['work_year'].min()
-max_year = grouped_data_v2['work_year'].max() + 6  # Including the forecast period
-
-# Initialize a plot for all experience levels
-plt.figure(figsize=(12, 8))
-
-# Create a time series model for each experience level and forecast future salaries
-for experience_level in experience_levels:
-    # Filter data for the current experience level
+# Train and save ARIMA models for each experience level
+unique_experience_levels = grouped_data_v2['experience_level_encoded'].unique()
+for experience_level in unique_experience_levels:
+    # Filter data for the specific experience level
     experience_data = grouped_data_v2[grouped_data_v2['experience_level_encoded'] == experience_level]
     experience_data.set_index('work_year', inplace=True)
     experience_data = experience_data.sort_index()
 
-    # Fit ARIMA model (p, d, q) parameters can be tuned for better performance
-    model = ARIMA(experience_data['salary_in_usd'], order=(1, 1, 1))
+    # Fit the ARIMA model
+    model = ARIMA(experience_data['salary_in_usd'], order=(1, 1, 1))  # Order can be tuned
     model_fit = model.fit()
 
-    # Forecasting the next 6 years
-    forecast_years = [experience_data.index[-1] + i for i in range(1, 7)]
-    forecast = model_fit.forecast(steps=6)
+    # Save the model to disk
+    model_filename = f'arima_models/arima_model_{experience_level}.pkl'
+    if not os.path.exists('arima_models'):
+        os.makedirs('arima_models')
+    joblib.dump(model_fit, model_filename)
 
-    # Display forecasted values
-    print(f"Experience Level: {experience_encoder.inverse_transform([experience_level])[0]}")
-    for year, value in zip(forecast_years, forecast):
-        print(f"Year {year}: Predicted Average Salary = ${value:.2f}")
+# Save the encoder for deployment
+joblib.dump(experience_encoder, 'experience_encoder.pkl')
 
-    # Plotting the original data and forecast in the combined graph
-    plt.plot(experience_data.index, experience_data['salary_in_usd'], marker='o', label=f'Historical Salary - {experience_encoder.inverse_transform([experience_level])[0]}')
-    plt.plot(forecast_years, forecast, marker='x', linestyle='--', label=f'Forecasted Salary - {experience_encoder.inverse_transform([experience_level])[0]}')
+# Plotting the trends for better visualization
+plt.figure(figsize=(12, 6))
+for experience_level in unique_experience_levels:
+    exp_label = experience_encoder.inverse_transform([experience_level])[0]
+    experience_data = grouped_data_v2[grouped_data_v2['experience_level_encoded'] == experience_level]
+    plt.plot(experience_data['work_year'], experience_data['salary_in_usd'], marker='o', label=exp_label)
 
-# Finalize the combined plot
 plt.xlabel('Year')
 plt.ylabel('Average Salary (USD)')
 plt.title('Average Salary Trends by Experience Level Over Time')
 plt.legend(title="Experience Level")
 plt.grid(True)
-plt.savefig('combined_salary_trends_forecast.png')
-plt.show()
-
-# Save the label encoder for deployment
-joblib.dump(experience_encoder, 'experience_encoder.pkl')
-
-# Print min and max year for frontend integration
-print(f"Min Year: {min_year}, Max Year: {max_year}")
+plt.savefig('salary_trends.png')
