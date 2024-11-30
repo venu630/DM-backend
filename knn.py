@@ -32,7 +32,7 @@ X_numerical = scaler.fit_transform(X[numerical_features])
 X_transformed = np.hstack((X_numerical, X_categorical.toarray()))
 
 # Set up the KNN classifier
-knn_model = KNeighborsClassifier(n_neighbors=5)
+knn_model = KNeighborsClassifier(n_neighbors=7)
 
 # Perform k-fold cross-validation using accuracy as the default scoring metric
 kf = KFold(n_splits=5, shuffle=True, random_state=42)
