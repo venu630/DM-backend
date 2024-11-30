@@ -93,7 +93,7 @@ for job_title in unique_job_titles:
         if len(job_data) < 5:
             model = ARIMA(job_data['salary_in_usd'], order=(0, 1, 0))
         else:
-            model = ARIMA(job_data['salary_in_usd'], order=(1, 1, 1))  # Default ARIMA model
+            model = ARIMA(job_data['salary_in_usd'], order=(2, 1, 2))  # Default ARIMA model
         model_fit = model.fit()
 
         # Save the model to disk
