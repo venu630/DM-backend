@@ -1,13 +1,16 @@
-import matplotlib
-from sklearn.calibration import LabelEncoder
-matplotlib.use('Agg')
-
 from flask import Flask, request, jsonify
 import joblib
 import pandas as pd
 from flask_cors import CORS
 import numpy as np
 import os
+import seaborn as sns
+import matplotlib.pyplot as plt
+from io import BytesIO
+import base64
+import matplotlib
+from sklearn.calibration import LabelEncoder
+matplotlib.use('Agg')
 
 app = Flask(__name__)
 CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
@@ -17,25 +20,24 @@ CORS(app, resources={r"/*": {"origins": "http://localhost:5173"}})
 # Load KNN models and encoders
 knn_model = joblib.load('knn_model.pkl')
 label_encoder = joblib.load('label_encoder.pkl')
-scaler = joblib.load('scaler.pkl')
+scaler_knn = joblib.load('scaler.pkl')  # Use a specific scaler for KNN
 onehot_encoder = joblib.load('onehot_encoder.pkl')
-experience_encoder = joblib.load('experience_encoder.pkl')
 job_title_encoder = joblib.load('job_title_encoder.pkl')
-
 
 # Load the dataset for time series analysis
 file_path = 'salaries.csv'
 df = pd.read_csv(file_path)
 
-# Encode the experience level to numerical values
-df['experience_level_encoded'] = experience_encoder.transform(df['experience_level'])
-
-# Group the data by work_year and experience_level_encoded, calculating the mean salary_in_usd for each group
-grouped_data_v2 = df.groupby(['work_year', 'experience_level_encoded'])['salary_in_usd'].mean().reset_index()
+# Load the clustering model-related objects
+centroids, clusterAssignment_train = joblib.load('kmeans_custom_model.pkl')  # Load KMeans centroids and cluster assignments
+scaler_clustering = joblib.load('scaler1.pkl')  # Load a separate scaler for clustering
+labelEncoderJob = joblib.load('label_encoder_job.pkl')  # Load LabelEncoder for job title
+labelEncoderLocation = joblib.load('label_encoder_location.pkl')  # Load LabelEncoder for company location
+labelEncoderExperience = joblib.load('label_encoder_experience.pkl')
+X_train_df = joblib.load('X_train_df.pkl')
 
 # -------------------- KNN Prediction Endpoint --------------------
 
-# Endpoint to predict experience level using KNN model
 @app.route('/knn_predict', methods=['POST'])
 def knn_predict():
     # Get user input and create a DataFrame
@@ -48,7 +50,7 @@ def knn_predict():
 
     # Apply one-hot encoding and scaling to match training data preprocessing
     user_categorical = onehot_encoder.transform(user_input[categorical_features])
-    user_numerical = scaler.transform(user_input[numerical_features])
+    user_numerical = scaler_knn.transform(user_input[numerical_features])  # Use scaler_knn for KNN
 
     # Combine transformed features
     user_transformed = np.hstack((user_numerical, user_categorical.toarray()))
@@ -62,17 +64,6 @@ def knn_predict():
     })
 
 # -------------------- Time Series Prediction Endpoint --------------------
-
-# Endpoint to predict salary using pre-trained ARIMA models
-# -------------------- Time Series Prediction Endpoint --------------------
-
-# Endpoint to predict salary using pre-trained ARIMA models
-# -------------------- Time Series Prediction Endpoint --------------------
-
-# Endpoint to predict salary using pre-trained ARIMA models
-
-file_path = 'salaries.csv'
-df = pd.read_csv(file_path)
 
 # Encode the job_title to numerical values
 job_title_encoder = LabelEncoder()
@@ -144,8 +135,77 @@ def timeseries_predict():
     except Exception as e:
         print('Exception in /timeseries_predict:', e)
         return jsonify({'error': str(e)}), 400
+    
+# -------------------- Clustering Prediction Endpoint --------------------
 
+@app.route('/clustering_predict', methods=['POST'])
+def clustering_predict():
+    try:
+        # Get user input from the request
+        user_data = request.get_json()
+        user_salary = float(user_data['salary_in_usd'])
+        user_job_title = user_data['job_title']
+        user_location = user_data['company_location']
+        user_experience_level = user_data['experience_level']
 
+        # Step 1: Preprocess the user input data (encode categorical values)
+        job_title_encoded = labelEncoderJob.transform([user_job_title])[0]
+        company_location_encoded = labelEncoderLocation.transform([user_location])[0]
+        experience_level_encoded = labelEncoderExperience.transform([user_experience_level])[0]
+
+        # Step 2: Standardize the user data point using the pre-trained scaler for clustering
+        user_data_point = pd.DataFrame([[user_salary, job_title_encoded, company_location_encoded, experience_level_encoded]], 
+                                       columns=['salary_in_usd', 'job_title_encoded', 'company_location_encoded', 'experience_level_encoded'])
+        user_data_scaled = scaler_clustering.transform(user_data_point)  # Use scaler_clustering for clustering
+
+        # Step 3: Predict the user's cluster based on the pre-trained centroids
+        distances = np.linalg.norm(user_data_scaled - centroids, axis=1)
+        user_cluster = np.argmin(distances)
+
+        # Step 4: Plot the training data clusters and highlight the user's data point
+        # plt.figure(figsize=(8, 6))
+        scatter = sns.scatterplot(x=X_train_df['PCA1'], y=X_train_df['PCA2'], hue=X_train_df['cluster'], palette='Set2', s=100, legend="full")
+        plt.scatter(user_data_scaled[0][0], user_data_scaled[0][1], color='red', s=200, marker='X', label="User Input")
+        plt.title(f'K-Means Clustering (k=3) with User Input Highlighted')
+        plt.xlabel('PCA1')
+        plt.ylabel('PCA2')
+        plt.legend(title='Cluster')
+        plt.tight_layout()
+
+        # Convert plot to base64 to send it to the frontend
+        img = BytesIO()
+        plt.savefig(img, format='png')
+        img.seek(0)
+        img_base64 = base64.b64encode(img.getvalue()).decode('utf-8')
+        plt.close()
+
+        # Step 5: Prepare the summary for the user's cluster
+        cluster_data = X_train_df[X_train_df['cluster'] == user_cluster]
+        avg_salary = cluster_data['salary_in_usd'].mean()
+        avg_job_title = cluster_data['job_title'].mode()[0]
+        avg_location = cluster_data['company_location'].mode()[0]
+        avg_experience = cluster_data['experience_level'].mode()[0]
+        
+        # Ensure that all values are of a type that can be serialized by JSON (i.e., standard Python types)
+        cluster_summary = {
+            'cluster': int(user_cluster),  # Convert int64 to int
+            'avg_salary': float(avg_salary),  # Convert to float
+            'avg_job_title': str(avg_job_title),  # Ensure string
+            'avg_location': str(avg_location),  # Ensure string
+            'avg_experience': str(avg_experience)  # Ensure string
+        }
+
+        # Return the plot image and cluster summary
+        response = {
+            'cluster_summary': cluster_summary,
+            'plot_image': img_base64
+        }
+
+        return jsonify(response)
+
+    except Exception as e:
+        print('Exception in /clustering_predict:', e)
+        return jsonify({'error': str(e)}), 400
 
 if __name__ == '__main__':
     app.run(debug=True)
