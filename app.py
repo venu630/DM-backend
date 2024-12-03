@@ -206,6 +206,52 @@ def clustering_predict():
     except Exception as e:
         print('Exception in /clustering_predict:', e)
         return jsonify({'error': str(e)}), 400
+    
+
+# Load the outlier detection model
+outlier_model_path = 'outlier_model.pkl'
+outlier_models = joblib.load(outlier_model_path)
+
+# Function to generate outlier plot with a vertical box plot
+def generate_outlier_plot(df, attribute, outliers, z_scores):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # Create a vertical box plot for the attribute
+    ax.boxplot(df[attribute], vert=True, patch_artist=True, boxprops=dict(facecolor='skyblue', color='blue'),
+               flierprops=dict(marker='o', color='red', markersize=8))  # Custom outlier markers
+    
+    # Add labels and title
+    ax.set_ylabel(attribute)
+    ax.set_title(f'Outlier Detection for {attribute} (Box Plot)')
+    
+    # Convert plot to base64 string
+    img_stream = BytesIO()
+    plt.savefig(img_stream, format='png')
+    img_stream.seek(0)
+    img_base64 = base64.b64encode(img_stream.getvalue()).decode('utf-8')
+    plt.close()
+
+    return img_base64
+
+# API Endpoint to get outlier visualization for a given attribute
+@app.route('/outliers', methods=['GET'])
+def get_outliers():
+    attribute = request.args.get('attribute')
+    if attribute not in outlier_models:
+        return jsonify({'error': f"Attribute '{attribute}' not found in the model."}), 400
+    
+    # Fetch the dataset and outlier data from the model
+    df = pd.read_csv('salaries.csv')  # Update with actual file path
+    outliers, z_scores = outlier_models[attribute]["outliers"], outlier_models[attribute]["z_scores"]
+    
+    # Generate the outlier plot and return as base64
+    img_base64 = generate_outlier_plot(df, attribute, outliers[0], z_scores)
+    
+    return jsonify({
+        'attribute': attribute,
+        'outliers': outliers[0].tolist(),  # Return outlier indices
+        'image': img_base64
+    })
 
 if __name__ == '__main__':
     app.run(debug=True)
